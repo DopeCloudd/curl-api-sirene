@@ -1,4 +1,5 @@
 import axios from "axios";
+import { spawn } from "child_process";
 import * as dotenv from "dotenv";
 import { promises as fs } from "fs";
 import * as nodemailer from "nodemailer";
@@ -97,7 +98,7 @@ const httpClient = axios.create({
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MAIL_FROM = "scraper.logpro@gmail.com";
-const MAIL_TO = "contact@organismes-certifies.com;contact@valentin-lerouge.fr";
+const MAIL_TO = "contact@organismes-certifies.fr;contact@valentin-lerouge.fr";
 const MAIL_SUBJECT = `Export Sirene ${getTodayStamp()}`;
 
 const mailTransporter = nodemailer.createTransport({
@@ -107,6 +108,76 @@ const mailTransporter = nodemailer.createTransport({
     pass: "ryop uslc xnbp apvh",
   },
 });
+
+const PY_ENRICH_REPO = process.env.PY_ENRICH_REPO;
+const PY_ENRICH_OUTPUT_DIR = process.env.PY_ENRICH_OUTPUT_DIR;
+const PY_ENRICH_OUTPUT_FORMAT = process.env.PY_ENRICH_OUTPUT_FORMAT ?? "excel";
+
+const runPythonEnrichment = async (inputFile: string): Promise<string> => {
+  if (!PY_ENRICH_REPO) {
+    throw new Error("Missing PY_ENRICH_REPO environment variable.");
+  }
+  if (!PY_ENRICH_OUTPUT_DIR) {
+    throw new Error("Missing PY_ENRICH_OUTPUT_DIR environment variable.");
+  }
+
+  const repoPath = path.resolve(PY_ENRICH_REPO);
+  const outputDir = path.resolve(PY_ENRICH_OUTPUT_DIR);
+  await fs.mkdir(outputDir, { recursive: true });
+  const outputExt = PY_ENRICH_OUTPUT_FORMAT === "excel" ? "xlsx" : "json";
+  const outputBaseName = path.basename(inputFile, path.extname(inputFile));
+  const outputFile = path.resolve(outputDir, `${outputBaseName}.${outputExt}`);
+  const args = [
+    "main.py",
+    "--input-format",
+    "json",
+    "--input-file",
+    inputFile,
+    "--output-format",
+    PY_ENRICH_OUTPUT_FORMAT,
+    "--output-file",
+    outputFile,
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("python", args, {
+      cwd: repoPath,
+      stdio: "inherit",
+    });
+
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(outputFile);
+        return;
+      }
+      reject(new Error(`Python enrichment failed with exit code ${code}`));
+    });
+  });
+};
+
+async function sendResultsByEmail(
+  standardFile: string,
+  eiFile: string,
+): Promise<void> {
+  await mailTransporter.sendMail({
+    from: MAIL_FROM,
+    to: MAIL_TO,
+    subject: MAIL_SUBJECT,
+    text: "Exports Sirene enrichis en pieces jointes.",
+    attachments: [
+      {
+        filename: path.basename(standardFile),
+        path: standardFile,
+      },
+      {
+        filename: path.basename(eiFile),
+        path: eiFile,
+      },
+    ],
+  });
+  console.log(`Email sent to ${MAIL_TO}`);
+}
 
 async function fetchPage(
   cursor: string,
@@ -165,29 +236,6 @@ async function saveResultsToFile(
   console.log(`Saved ${data.length} etablissements to ${outputFile}`);
 }
 
-async function sendResultsByEmail(
-  standardFile: string,
-  eiFile: string,
-): Promise<void> {
-  await mailTransporter.sendMail({
-    from: MAIL_FROM,
-    to: MAIL_TO,
-    subject: MAIL_SUBJECT,
-    text: "Exports Sirene en pieces jointes.",
-    attachments: [
-      {
-        filename: path.basename(standardFile),
-        path: standardFile,
-      },
-      {
-        filename: path.basename(eiFile),
-        path: eiFile,
-      },
-    ],
-  });
-  console.log(`Email sent to ${MAIL_TO}`);
-}
-
 async function main(): Promise<void> {
   try {
     const etablissements = await fetchAllEtablissements(
@@ -200,7 +248,9 @@ async function main(): Promise<void> {
     );
     await saveResultsToFile(etablissements, OUTPUT_FILE_STANDARD);
     await saveResultsToFile(etablissementsEi, OUTPUT_FILE_EI);
-    await sendResultsByEmail(OUTPUT_FILE_STANDARD, OUTPUT_FILE_EI);
+    const enrichedStandard = await runPythonEnrichment(OUTPUT_FILE_STANDARD);
+    const enrichedEi = await runPythonEnrichment(OUTPUT_FILE_EI);
+    await sendResultsByEmail(enrichedStandard, enrichedEi);
   } catch (error) {
     if (axios.isAxiosError(error)) {
       console.error("Request failed with status", error.response?.status);
