@@ -107,8 +107,12 @@ const QUERY_PARAMS_EI: Record<string, string | number | boolean> = {
   // Add additional params here if needed, e.g. 'debut': 0
 };
 
+const normalizeEnv = (value?: string): string | undefined =>
+  value?.trim() || undefined;
+
 const SIRENE_API_KEY =
-  process.env.SIRENE_API_KEY ?? process.env.SIRENE_API_TOKEN;
+  normalizeEnv(process.env.SIRENE_API_KEY) ??
+  normalizeEnv(process.env.SIRENE_API_TOKEN);
 
 if (!SIRENE_API_KEY) {
   const message =
@@ -130,7 +134,9 @@ const httpClient = axios.create({
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MAIL_FROM = "scraper.logpro@gmail.com";
-const MAIL_TO = "contact@organismes-certifies.fr;contact@valentin-lerouge.fr";
+const MAIL_TO =
+  normalizeEnv(process.env.MAIL_TO) ??
+  "contact@organismes-certifies.fr;contact@valentin-lerouge.fr";
 const MAIL_SUBJECT = `Export Sirene ${getTodayStamp()}`;
 
 const mailTransporter = nodemailer.createTransport({
@@ -141,9 +147,10 @@ const mailTransporter = nodemailer.createTransport({
   },
 });
 
-const PY_ENRICH_REPO = process.env.PY_ENRICH_REPO;
-const PY_ENRICH_OUTPUT_DIR = process.env.PY_ENRICH_OUTPUT_DIR;
-const PY_ENRICH_OUTPUT_FORMAT = process.env.PY_ENRICH_OUTPUT_FORMAT ?? "excel";
+const PY_ENRICH_REPO = normalizeEnv(process.env.PY_ENRICH_REPO);
+const PY_ENRICH_OUTPUT_DIR = normalizeEnv(process.env.PY_ENRICH_OUTPUT_DIR);
+const PY_ENRICH_OUTPUT_FORMAT =
+  normalizeEnv(process.env.PY_ENRICH_OUTPUT_FORMAT) ?? "excel";
 
 const runPythonEnrichment = async (inputFile: string): Promise<string> => {
   if (!PY_ENRICH_REPO) {
