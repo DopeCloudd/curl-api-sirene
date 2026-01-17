@@ -1,6 +1,7 @@
 import axios from "axios";
 import { spawn } from "child_process";
 import * as dotenv from "dotenv";
+import * as fsSync from "fs";
 import { promises as fs } from "fs";
 import * as nodemailer from "nodemailer";
 import * as path from "path";
@@ -24,6 +25,34 @@ interface SireneResponse {
 
 type Establishment = Record<string, unknown>;
 
+const formatLog = (level: string, message: string): string =>
+  `${new Date().toISOString()} [${level}] ${message}`;
+
+const appendLog = async (level: string, message: string): Promise<void> => {
+  await fs.mkdir(LOG_DIR, { recursive: true });
+  await fs.appendFile(LOG_FILE, formatLog(level, message) + "\n", "utf-8");
+};
+
+const appendLogSync = (level: string, message: string): void => {
+  fsSync.mkdirSync(LOG_DIR, { recursive: true });
+  fsSync.appendFileSync(LOG_FILE, formatLog(level, message) + "\n", "utf-8");
+};
+
+const logInfo = async (message: string): Promise<void> => {
+  console.log(message);
+  await appendLog("INFO", message);
+};
+
+const logWarn = async (message: string): Promise<void> => {
+  console.warn(message);
+  await appendLog("WARN", message);
+};
+
+const logError = async (message: string): Promise<void> => {
+  console.error(message);
+  await appendLog("ERROR", message);
+};
+
 const API_BASE_URL = "https://api.insee.fr/api-sirene/3.11";
 const SIRET_ENDPOINT = "/siret";
 const getTodayStamp = (): string => {
@@ -46,6 +75,8 @@ const getDateDaysAgoStamp = (daysAgo: number): string => {
 const LAST_WEEK_START = getDateDaysAgoStamp(7);
 
 const OUTPUT_DIR = path.resolve(process.cwd(), "result");
+const LOG_DIR = path.resolve(process.cwd(), "logs");
+const LOG_FILE = path.resolve(LOG_DIR, `run-${getTodayStamp()}.txt`);
 const OUTPUT_FILE_STANDARD = path.resolve(
   OUTPUT_DIR,
   `etablissements-${getTodayStamp()}.json`,
@@ -80,9 +111,10 @@ const SIRENE_API_KEY =
   process.env.SIRENE_API_KEY ?? process.env.SIRENE_API_TOKEN;
 
 if (!SIRENE_API_KEY) {
-  console.error(
-    "Please set the SIRENE_API_KEY (or legacy SIRENE_API_TOKEN) environment variable before running the script.",
-  );
+  const message =
+    "Please set the SIRENE_API_KEY (or legacy SIRENE_API_TOKEN) environment variable before running the script.";
+  console.error(message);
+  appendLogSync("ERROR", message);
   process.exit(1);
 }
 
@@ -176,7 +208,7 @@ async function sendResultsByEmail(
       },
     ],
   });
-  console.log(`Email sent to ${MAIL_TO}`);
+  await logInfo(`Email sent to ${MAIL_TO}`);
 }
 
 async function fetchPage(
@@ -201,19 +233,19 @@ async function fetchAllEtablissements(
   while (true) {
     const { header, etablissements } = await fetchPage(cursor, queryParams);
     const count = etablissements?.length ?? 0;
-    console.log(
+    await logInfo(
       `[${label}] Page ${page} | curseur=${cursor} | +${count} etablissements`,
     );
 
     if (count === 0) {
-      console.warn("No more records returned by the API.");
+      await logWarn("No more records returned by the API.");
       break;
     }
 
     allEtablissements.push(...etablissements);
 
     if (!header?.curseurSuivant || header.curseurSuivant === cursor) {
-      console.log("Reached the last page.");
+      await logInfo("Reached the last page.");
       break;
     }
 
@@ -233,7 +265,7 @@ async function saveResultsToFile(
 ): Promise<void> {
   await fs.mkdir(OUTPUT_DIR, { recursive: true });
   await fs.writeFile(outputFile, JSON.stringify(data, null, 2), "utf-8");
-  console.log(`Saved ${data.length} etablissements to ${outputFile}`);
+  await logInfo(`Saved ${data.length} etablissements to ${outputFile}`);
 }
 
 async function main(): Promise<void> {
@@ -253,10 +285,12 @@ async function main(): Promise<void> {
     await sendResultsByEmail(enrichedStandard, enrichedEi);
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error("Request failed with status", error.response?.status);
-      console.error(error.response?.data ?? error.message);
+      await logError(
+        `Request failed with status ${String(error.response?.status ?? "")}`.trim(),
+      );
+      await logError(String(error.response?.data ?? error.message));
     } else {
-      console.error("Unexpected error", error);
+      await logError(`Unexpected error ${String(error)}`);
     }
     process.exit(1);
   }
