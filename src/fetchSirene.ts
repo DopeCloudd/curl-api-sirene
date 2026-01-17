@@ -1,6 +1,7 @@
 import axios from "axios";
 import * as dotenv from "dotenv";
 import { promises as fs } from "fs";
+import * as nodemailer from "nodemailer";
 import * as path from "path";
 
 dotenv.config();
@@ -43,12 +44,13 @@ const getDateDaysAgoStamp = (daysAgo: number): string => {
 
 const LAST_WEEK_START = getDateDaysAgoStamp(7);
 
+const OUTPUT_DIR = path.resolve(process.cwd(), "result");
 const OUTPUT_FILE_STANDARD = path.resolve(
-  process.cwd(),
+  OUTPUT_DIR,
   `etablissements-${getTodayStamp()}.json`,
 );
 const OUTPUT_FILE_EI = path.resolve(
-  process.cwd(),
+  OUTPUT_DIR,
   `etablissements-ei-${getTodayStamp()}.json`,
 );
 const REQUEST_INTERVAL_MS = 4_000; // pause between pages to avoid rate limiting in milliseconds (0 = no pause)
@@ -93,6 +95,18 @@ const httpClient = axios.create({
 });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const MAIL_FROM = "scraper.logpro@gmail.com";
+const MAIL_TO = "contact@organismes-certifies.com;contact@valentin-lerouge.fr";
+const MAIL_SUBJECT = `Export Sirene ${getTodayStamp()}`;
+
+const mailTransporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: "scraper.logpro@gmail.com",
+    pass: "ryop uslc xnbp apvh",
+  },
+});
 
 async function fetchPage(
   cursor: string,
@@ -146,8 +160,32 @@ async function saveResultsToFile(
   data: Establishment[],
   outputFile: string,
 ): Promise<void> {
+  await fs.mkdir(OUTPUT_DIR, { recursive: true });
   await fs.writeFile(outputFile, JSON.stringify(data, null, 2), "utf-8");
   console.log(`Saved ${data.length} etablissements to ${outputFile}`);
+}
+
+async function sendResultsByEmail(
+  standardFile: string,
+  eiFile: string,
+): Promise<void> {
+  await mailTransporter.sendMail({
+    from: MAIL_FROM,
+    to: MAIL_TO,
+    subject: MAIL_SUBJECT,
+    text: "Exports Sirene en pieces jointes.",
+    attachments: [
+      {
+        filename: path.basename(standardFile),
+        path: standardFile,
+      },
+      {
+        filename: path.basename(eiFile),
+        path: eiFile,
+      },
+    ],
+  });
+  console.log(`Email sent to ${MAIL_TO}`);
 }
 
 async function main(): Promise<void> {
@@ -162,6 +200,7 @@ async function main(): Promise<void> {
     );
     await saveResultsToFile(etablissements, OUTPUT_FILE_STANDARD);
     await saveResultsToFile(etablissementsEi, OUTPUT_FILE_EI);
+    await sendResultsByEmail(OUTPUT_FILE_STANDARD, OUTPUT_FILE_EI);
   } catch (error) {
     if (axios.isAxiosError(error)) {
       console.error("Request failed with status", error.response?.status);

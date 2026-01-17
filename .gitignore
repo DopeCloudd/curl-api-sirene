@@ -1,3 +1,4 @@
 etablissements*.json
 node_modules/
 .env
+result/
