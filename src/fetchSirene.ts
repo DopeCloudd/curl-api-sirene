@@ -136,7 +136,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const MAIL_FROM = "scraper.logpro@gmail.com";
 const MAIL_TO =
   normalizeEnv(process.env.MAIL_TO) ??
-  "contact@organismes-certifies.fr;contact@valentin-lerouge.fr";
+  "contact@organismes-certifies.fr;contact@valentin-lerouge.fr;act2011@hotmail.fr";
 const MAIL_SUBJECT = `Export Sirene ${getTodayStamp()}`;
 
 const mailTransporter = nodemailer.createTransport({
